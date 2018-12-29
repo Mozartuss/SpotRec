@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+import urllib.request
+
+from mutagen.id3 import ID3, APIC, TRCK
 
 import dbus
 from dbus.exceptions import DBusException
@@ -26,7 +29,7 @@ import shlex
 # 'bash': shell commands
 
 app_name = "SpotRec"
-app_version = "0.11.1"
+app_version = "0.11.2"
 
 # Settings with Defaults
 _debug_logging = False
@@ -34,15 +37,15 @@ _skip_intro = False
 _no_pa_sink = False
 _mute_pa_sink = False
 _output_directory = "Audio"
-_filename_pattern = "{trackNumber} - {artist} - {title}"
-_tmp_file = False
+_filename_pattern = "{artist} - {title}"
+_tmp_file = True
 _underscored_filenames = False
 
 # Hard-coded settings
 _pa_recording_sink_name = "spotrec"
 _pa_max_volume = "65536"
 _recording_time_before_song = 0.25
-_recording_time_after_song = 2.25
+_recording_time_after_song = 1.25
 _playback_time_before_seeking_to_beginning = 4.5
 _shell_executable = "/bin/bash"  # Default: "/bin/sh"
 _shell_encoding = "utf-8"
@@ -60,11 +63,8 @@ def main():
     if not _skip_intro:
         print(app_name + " v" + app_version)
         print("You should not pause, seek or change volume during recording!")
-        print('Recordings are save to a directory called "Audio" in your current working directory by default. Existing files will be overridden!')
+        print('Recordings are save to a directory called "{0}"'.format(_output_directory))
         print('Use --help as argument to see all options.')
-        print()
-        print("Disclaimer:")
-        print('This software is for "educational" purposes only. No responsibility is held or accepted for misuse.')
         print()
 
     init_log()
@@ -108,7 +108,7 @@ def doExit():
 
     # Have to use os exit here, because otherwise GLib would print a strange error message
     os._exit(0)
-    #sys.exit(0)
+    # sys.exit(0)
 
 
 def handle_command_line():
@@ -121,19 +121,27 @@ def handle_command_line():
     global _tmp_file
     global _underscored_filenames
 
-    #parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser = argparse.ArgumentParser(description=app_name + " v" + app_version, formatter_class=argparse.RawTextHelpFormatter)
+    # parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(description=app_name + " v" + app_version,
+                                     formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("-d", "--debug", help="Print a little more", action="store_true", default=_debug_logging)
     parser.add_argument("-s", "--skip-intro", help="Skip the intro message", action="store_true", default=_skip_intro)
-    parser.add_argument("-n", "--no-sink", help="Don't create an extra PulseAudio sink for recording", action="store_true", default=_no_pa_sink)
-    parser.add_argument("-m", "--mute-sink", help="Don't play sink output on your main sink", action="store_true", default=_mute_pa_sink)
+    parser.add_argument("-n", "--no-sink", help="Don't create an extra PulseAudio sink for recording",
+                        action="store_true", default=_no_pa_sink)
+    parser.add_argument("-m", "--mute-sink", help="Don't play sink output on your main sink", action="store_true",
+                        default=_mute_pa_sink)
     parser.add_argument("-o", "--output-directory", help="Where to save the recordings\n"
                                                          "Default: " + _output_directory, default=_output_directory)
     parser.add_argument("-p", "--filename-pattern", help="A pattern for the file names of the recordings\n"
                                                          "Available: {artist}, {album}, {trackNumber}, {title}\n"
-                                                         "Default: \"" + _filename_pattern + "\"", default=_filename_pattern)
-    parser.add_argument("-t", "--tmp-file", help="Use a temporary hidden file during recording and rename it only if the recording has been completed succesfully", action="store_true", default=_tmp_file)
-    parser.add_argument("-u", "--underscored-filenames", help="Force the file names to have underscores instead of whitespaces", action="store_true", default=_underscored_filenames)
+                                                         "Default: \"" + _filename_pattern + "\"",
+                        default=_filename_pattern)
+    parser.add_argument("-t", "--tmp-file",
+                        help="Use a temporary hidden file during recording and rename it only if the recording has been completed succesfully",
+                        action="store_true", default=_tmp_file)
+    parser.add_argument("-u", "--underscored-filenames",
+                        help="Force the file names to have underscores instead of whitespaces", action="store_true",
+                        default=_underscored_filenames)
 
     args = parser.parse_args()
 
@@ -216,7 +224,12 @@ class Spotify:
 
     # TODO: this is a dirty solution (uses cmdline instead of python for now)
     def send_dbus_cmd(self, cmd):
-        Shell.run('dbus-send --print-reply --dest=' + self.dbus_dest + ' ' + self.dbus_path + ' ' + self.mpris_player_string + '.' + cmd)
+        Shell.run('dbus-send --print-reply --dest='
+                  + self.dbus_dest + ' '
+                  + self.dbus_path + ' '
+                  + self.mpris_player_string
+                  + '.'
+                  + cmd)
 
     def quit_glib_loop(self):
         self.glibloop.quit()
@@ -227,9 +240,11 @@ class Spotify:
         return {
             "artist": self.metadata_artist,
             "album": self.metadata_album,
-            "track": self.metadata_trackNumber,
             "title": self.metadata_title
         }
+
+    def get_cover_for_easyid3(self):
+        return self.metadata_cover
 
     def get_track(self, metadata):
         if _underscored_filenames:
@@ -240,9 +255,8 @@ class Spotify:
         ret = str(filename_pattern.format(
             artist=self.metadata_artist,
             album=self.metadata_artist,
-            trackNumber=self.metadata_trackNumber,
             title=self.metadata_title
-            ))
+        ))
 
         if _underscored_filenames:
             ret = ret.replace(".", "").lower()
@@ -295,7 +309,10 @@ class Spotify:
 
                 # Start FFmpeg recording
                 ff = FFmpeg()
-                ff.record(self.track, self.get_metadata_for_ffmpeg(self.metadata))
+                ff.record(self.track,
+                          self.metadata_cover,
+                          self.metadata_track_num,
+                          self.get_metadata_for_ffmpeg(self.metadata))
 
                 # Give FFmpeg some time to start up before starting the song
                 time.sleep(_recording_time_before_song)
@@ -326,7 +343,7 @@ class Spotify:
         global track
         global home
 
-        #log.debug("uri changed event")
+        # log.debug("uri changed event")
 
         # Update Metadata
         self.update_metadata()
@@ -368,8 +385,9 @@ class Spotify:
 
         self.metadata_artist = ", ".join(self.metadata.get(dbus.String(u'xesam:artist')))
         self.metadata_album = self.metadata.get(dbus.String(u'xesam:album'))
-        self.metadata_trackNumber = str(self.metadata.get(dbus.String(u'xesam:trackNumber'))).zfill(2)
         self.metadata_title = self.metadata.get(dbus.String(u'xesam:title'))
+        self.metadata_cover = self.metadata.get(dbus.String(u'mpris:artUrl'))
+        self.metadata_track_num = self.metadata(dbus.String(u'xesam:trackNumber'))
 
     def init_pa_stuff_if_needed(self):
         if self.is_playing():
@@ -387,8 +405,10 @@ class Spotify:
 
 class FFmpeg:
     instances = []
+    image_url = ""
+    track_num = ""
 
-    def record(self, filename, metadata_for_file = {}):
+    def record(self, filename, image_url, track_num, metadata_for_file=dict):
         if _no_pa_sink:
             self.pulse_input = "default"
         else:
@@ -397,9 +417,9 @@ class FFmpeg:
         if _tmp_file:
             # Use a dot as filename prefix to hide the file until the recording was successful
             self.tmp_file_prefix = "."
-            self.filename = self.tmp_file_prefix + filename + ".flac"
+            self.filename = self.tmp_file_prefix + filename + ".mp3"
         else:
-            self.filename = filename + ".flac"
+            self.filename = filename + ".mp3"
 
         # build metadata param
         metadata_params = ''
@@ -409,13 +429,37 @@ class FFmpeg:
         # FFmpeg Options:
         #  "-hide_banner": to short the debug log a little
         #  "-y": to overwrite existing files
-        self.process = Shell.Popen(_ffmpeg_executable + ' -hide_banner -y -f pulse -ac 2 -ar 44100 -i ' + self.pulse_input + metadata_params + ' -acodec flac ' + shlex.quote(_output_directory + "/" + self.filename))
+        self.process = Shell.Popen(_ffmpeg_executable
+                                   + ' -hide_banner -y -f pulse -ac 2 -ar 44100 -i '
+                                   + self.pulse_input
+                                   + metadata_params
+                                   + ' -acodec libmp3lame -ab 320k '
+                                   + shlex.quote(_output_directory + "/" + self.filename))
 
         self.pid = str(self.process.pid)
 
         self.instances.append(self)
 
+        self.image_url = image_url
+        self.track_num = track_num
+
         log.info(f"[FFmpeg] [{self.pid}] Recording started")
+
+    def embed_metadata(self, music_file, cover_url):
+        audiofile = ID3(music_file)
+
+        albumart = urllib.request.urlopen(cover_url)
+        audiofile["APIC"] = APIC(
+            encoding=3,
+            mime="image/jpeg",
+            type=3,
+            desc=u"Cover",
+            data=albumart.read(),
+        )
+        audiofile["TRCK"] = self.
+        albumart.close()
+        audiofile.save(v2_version=3)
+        log.info(f"[FFmpeg] [{self.pid}] Add Album Art")
 
     # The blocking version of this method waits until the process is dead
     def stop_blocking(self):
@@ -439,6 +483,7 @@ class FFmpeg:
                 log.info(f"[FFmpeg] [{self.pid}] killed")
             else:
                 if _tmp_file:
+                    self.embed_metadata((_output_directory + "/" + self.filename), self.image_url)
                     tmp_file = os.path.join(_output_directory, self.filename)
                     new_file = os.path.join(_output_directory,
                                             self.filename[len(self.tmp_file_prefix):])
@@ -477,28 +522,50 @@ class Shell:
         # 'run()' waits until the process is done
         log.debug(f"[Shell] run: {cmd}")
         if _debug_logging:
-            return subprocess.run(cmd.encode(_shell_encoding), stdin=None, shell=True, executable=_shell_executable, encoding=_shell_encoding)
+            return subprocess.run(cmd.encode(_shell_encoding),
+                                  stdin=None,
+                                  shell=True,
+                                  executable=_shell_executable,
+                                  encoding=_shell_encoding)
         else:
             with open("/dev/null", "w") as devnull:
-                return subprocess.run(cmd.encode(_shell_encoding), stdin=None, stdout=devnull, stderr=devnull, shell=True, executable=_shell_executable, encoding=_shell_encoding)
+                return subprocess.run(cmd.encode(_shell_encoding),
+                                      stdin=None, stdout=devnull,
+                                      stderr=devnull,
+                                      shell=True,
+                                      executable=_shell_executable,
+                                      encoding=_shell_encoding)
 
     @staticmethod
     def Popen(cmd):
         # 'Popen()' continues running in the background
         log.debug(f"[Shell] Popen: {cmd}")
         if _debug_logging:
-            return subprocess.Popen(cmd.encode(_shell_encoding), stdin=None, shell=True, executable=_shell_executable, encoding=_shell_encoding)
+            return subprocess.Popen(cmd.encode(_shell_encoding),
+                                    stdin=None,
+                                    shell=True,
+                                    executable=_shell_executable,
+                                    encoding=_shell_encoding)
         else:
             with open("/dev/null", "w") as devnull:
-                return subprocess.Popen(cmd.encode(_shell_encoding), stdin=None, stdout=devnull, stderr=devnull, shell=True, executable=_shell_executable, encoding=_shell_encoding)
+                return subprocess.Popen(cmd.encode(_shell_encoding),
+                                        stdin=None,
+                                        stdout=devnull,
+                                        stderr=devnull,
+                                        shell=True,
+                                        executable=_shell_executable,
+                                        encoding=_shell_encoding)
 
     @staticmethod
     def check_output(cmd):
         log.debug(f"[Shell] check_output: {cmd}")
-        out = subprocess.check_output(cmd.encode(_shell_encoding), shell=True, executable=_shell_executable, encoding=_shell_encoding)
+        out = subprocess.check_output(cmd.encode(_shell_encoding),
+                                      shell=True,
+                                      executable=_shell_executable,
+                                      encoding=_shell_encoding)
         # when not using 'encoding=' -> out.decode()
         # but since it is set, decode() ist not needed anymore
-        #out = out.decode()
+        # out = out.decode()
         return out.rstrip('\n')
 
 
@@ -510,9 +577,17 @@ class PulseAudio:
         log.info(f"[{app_name}] Creating pulse sink")
 
         if _mute_pa_sink:
-            PulseAudio.sink_id = Shell.check_output('pactl load-module module-null-sink sink_name="' + _pa_recording_sink_name + '" sink_properties=device.description="' + _pa_recording_sink_name + '" rate=44100 channels=2')
+            PulseAudio.sink_id = Shell.check_output('pactl load-module module-null-sink sink_name="'
+                                                    + _pa_recording_sink_name
+                                                    + '" sink_properties=device.description="'
+                                                    + _pa_recording_sink_name
+                                                    + '" rate=44100 channels=2')
         else:
-            PulseAudio.sink_id = Shell.check_output('pactl load-module module-remap-sink sink_name="' + _pa_recording_sink_name + '" sink_properties=device.description="' + _pa_recording_sink_name + '" rate=44100 channels=2 remix=no')
+            PulseAudio.sink_id = Shell.check_output('pactl load-module module-remap-sink sink_name="'
+                                                    + _pa_recording_sink_name
+                                                    + '" sink_properties=device.description="'
+                                                    + _pa_recording_sink_name
+                                                    + '" rate=44100 channels=2 remix=no')
             # To use another master sink where to play:
             # pactl load-module module-remap-sink sink_name=spotrec sink_properties=device.description="spotrec" master=MASTER_SINK_NAME channels=2 remix=no
 
@@ -529,13 +604,14 @@ class PulseAudio:
             return
 
         application_name = "spotify"
-        cmdout = Shell.check_output("pactl list sink-inputs | awk '{print tolower($0)};' | awk '/ #/ {print $0} /application.name = \"" + application_name + "\"/ {print $3};'")
+        cmdout = Shell.check_output(
+            "pactl list sink-inputs | awk '{print tolower($0)};' | awk '/ #/ {print $0} /application.name = \"" + application_name + "\"/ {print $3};'")
         index = -1
         last = ""
 
         for line in cmdout.split('\n'):
             if line == '"' + application_name + '"':
-                index = last.split(" #",1)[1]
+                index = last.split(" #", 1)[1]
                 break
             last = line
 
@@ -549,7 +625,8 @@ class PulseAudio:
         class MoveSpotifyToSinktThread(Thread):
             def run(self):
                 if pa_spotify_sink_input_id > -1:
-                    exit_code = Shell.run("pactl move-sink-input " + str(pa_spotify_sink_input_id) + " " + _pa_recording_sink_name).returncode
+                    exit_code = Shell.run("pactl move-sink-input " + str(
+                        pa_spotify_sink_input_id) + " " + _pa_recording_sink_name).returncode
 
                     if exit_code == 0:
                         log.info(f"[{app_name}] Moved Spotify to own sink")
