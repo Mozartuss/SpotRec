@@ -1,12 +1,14 @@
 #!/usr/bin/python3
 import urllib.request
 
-from mutagen.id3 import ID3, APIC, TRCK
+from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3, APIC, TRCK, TORY, TYER, TPUB, COMM
 
 import dbus
 from dbus.exceptions import DBusException
 import dbus.mainloop.glib
 from gi.repository import GLib
+from helper.SpotifyHelper import generate_metadata as spotMeta
 
 from threading import Thread
 import subprocess
@@ -310,8 +312,7 @@ class Spotify:
                 # Start FFmpeg recording
                 ff = FFmpeg()
                 ff.record(self.track,
-                          self.metadata_cover,
-                          self.metadata_track_num,
+                          self.metadata_track_uri,
                           self.get_metadata_for_ffmpeg(self.metadata))
 
                 # Give FFmpeg some time to start up before starting the song
@@ -387,7 +388,7 @@ class Spotify:
         self.metadata_album = self.metadata.get(dbus.String(u'xesam:album'))
         self.metadata_title = self.metadata.get(dbus.String(u'xesam:title'))
         self.metadata_cover = self.metadata.get(dbus.String(u'mpris:artUrl'))
-        self.metadata_track_num = self.metadata(dbus.String(u'xesam:trackNumber'))
+        self.metadata_track_uri = self.metadata.get(dbus.String(u'mpris:trackid'))
 
     def init_pa_stuff_if_needed(self):
         if self.is_playing():
@@ -405,10 +406,9 @@ class Spotify:
 
 class FFmpeg:
     instances = []
-    image_url = ""
-    track_num = ""
+    song_uri = ""
 
-    def record(self, filename, image_url, track_num, metadata_for_file=dict):
+    def record(self, filename, song_uri, metadata_for_file=dict):
         if _no_pa_sink:
             self.pulse_input = "default"
         else:
@@ -439,27 +439,9 @@ class FFmpeg:
         self.pid = str(self.process.pid)
 
         self.instances.append(self)
-
-        self.image_url = image_url
-        self.track_num = track_num
+        self.song_uri = song_uri
 
         log.info(f"[FFmpeg] [{self.pid}] Recording started")
-
-    def embed_metadata(self, music_file, cover_url):
-        audiofile = ID3(music_file)
-
-        albumart = urllib.request.urlopen(cover_url)
-        audiofile["APIC"] = APIC(
-            encoding=3,
-            mime="image/jpeg",
-            type=3,
-            desc=u"Cover",
-            data=albumart.read(),
-        )
-        audiofile["TRCK"] = self.
-        albumart.close()
-        audiofile.save(v2_version=3)
-        log.info(f"[FFmpeg] [{self.pid}] Add Album Art")
 
     # The blocking version of this method waits until the process is dead
     def stop_blocking(self):
@@ -483,8 +465,9 @@ class FFmpeg:
                 log.info(f"[FFmpeg] [{self.pid}] killed")
             else:
                 if _tmp_file:
-                    self.embed_metadata((_output_directory + "/" + self.filename), self.image_url)
                     tmp_file = os.path.join(_output_directory, self.filename)
+                    MetaData(spotMeta(self.song_uri), tmp_file)
+
                     new_file = os.path.join(_output_directory,
                                             self.filename[len(self.tmp_file_prefix):])
                     if os.path.exists(tmp_file):
@@ -514,6 +497,48 @@ class FFmpeg:
             FFmpeg.instances[0].stop_blocking()
 
         log.info("[FFmpeg] All instances killed")
+
+
+class MetaData:
+    def __init__(self, spotify_dict, music_file):
+        self.spotify_dict = spotify_dict
+        self.music_file = music_file
+
+        self.embed_metadata()
+
+    def embed_metadata(self):
+        music_file = self.music_file
+        meta_tags = self.spotify_dict
+
+        audiofile = EasyID3(music_file)
+        audiofile["author"] = meta_tags["artists"][0]["name"]
+        audiofile["website"] = meta_tags["external_urls"]["spotify"]
+        if meta_tags["publisher"]:
+            audiofile["encodedby"] = meta_tags["publisher"]
+        if meta_tags["external_ids"]["isrc"]:
+            audiofile["isrc"] = meta_tags["external_ids"]["isrc"]
+        audiofile.save(v2_version=3)
+
+        audiofile = ID3(music_file)
+        audiofile["TORY"] = TORY(encoding=3, text=meta_tags["year"])
+        audiofile["TYER"] = TYER(encoding=3, text=meta_tags["year"])
+        if meta_tags["publisher"]:
+            audiofile["TPUB"] = TPUB(encoding=3, text=meta_tags["publisher"])
+        try:
+            albumart = urllib.request.urlopen(meta_tags["album"]["images"][0]["url"])
+            audiofile["APIC"] = APIC(
+                encoding=3,
+                mime="image/jpeg",
+                type=3,
+                desc=u"Cover",
+                data=albumart.read(),
+            )
+            albumart.close()
+        except IndexError:
+            pass
+
+        audiofile.save(v2_version=3)
+        log.info(f"[{app_name}] Tags saved")
 
 
 class Shell:
