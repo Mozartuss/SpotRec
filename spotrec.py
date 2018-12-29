@@ -245,9 +245,6 @@ class Spotify:
             "title": self.metadata_title
         }
 
-    def get_cover_for_easyid3(self):
-        return self.metadata_cover
-
     def get_track(self, metadata):
         if _underscored_filenames:
             filename_pattern = re.sub(" - ", "__", _filename_pattern)
@@ -312,8 +309,7 @@ class Spotify:
                 # Start FFmpeg recording
                 ff = FFmpeg()
                 ff.record(self.track,
-                          self.metadata_track_uri,
-                          self.get_metadata_for_ffmpeg(self.metadata))
+                          self.metadata_track_uri)
 
                 # Give FFmpeg some time to start up before starting the song
                 time.sleep(_recording_time_before_song)
@@ -385,9 +381,7 @@ class Spotify:
         self.metadata = self.iface.Get(self.mpris_player_string, "Metadata")
 
         self.metadata_artist = ", ".join(self.metadata.get(dbus.String(u'xesam:artist')))
-        self.metadata_album = self.metadata.get(dbus.String(u'xesam:album'))
         self.metadata_title = self.metadata.get(dbus.String(u'xesam:title'))
-        self.metadata_cover = self.metadata.get(dbus.String(u'mpris:artUrl'))
         self.metadata_track_uri = self.metadata.get(dbus.String(u'mpris:trackid'))
 
     def init_pa_stuff_if_needed(self):
@@ -408,7 +402,7 @@ class FFmpeg:
     instances = []
     song_uri = ""
 
-    def record(self, filename, song_uri, metadata_for_file=dict):
+    def record(self, filename, song_uri):
         if _no_pa_sink:
             self.pulse_input = "default"
         else:
@@ -421,18 +415,11 @@ class FFmpeg:
         else:
             self.filename = filename + ".mp3"
 
-        # build metadata param
-        metadata_params = ''
-        for key, value in metadata_for_file.items():
-            metadata_params += ' -metadata ' + key + '=' + shlex.quote(value)
-
-        # FFmpeg Options:
         #  "-hide_banner": to short the debug log a little
         #  "-y": to overwrite existing files
         self.process = Shell.Popen(_ffmpeg_executable
-                                   + ' -hide_banner -y -f pulse -ac 2 -ar 44100 -i '
+                                   + ' -hide_banner -y -f pulse -ac 2 -ar 48000 -i '
                                    + self.pulse_input
-                                   + metadata_params
                                    + ' -acodec libmp3lame -ab 320k '
                                    + shlex.quote(_output_directory + "/" + self.filename))
 
@@ -606,15 +593,13 @@ class PulseAudio:
                                                     + _pa_recording_sink_name
                                                     + '" sink_properties=device.description="'
                                                     + _pa_recording_sink_name
-                                                    + '" rate=44100 channels=2')
+                                                    + '" rate=48000 channels=2')
         else:
             PulseAudio.sink_id = Shell.check_output('pactl load-module module-remap-sink sink_name="'
                                                     + _pa_recording_sink_name
                                                     + '" sink_properties=device.description="'
                                                     + _pa_recording_sink_name
-                                                    + '" rate=44100 channels=2 remix=no')
-            # To use another master sink where to play:
-            # pactl load-module module-remap-sink sink_name=spotrec sink_properties=device.description="spotrec" master=MASTER_SINK_NAME channels=2 remix=no
+                                                    + '" rate=48000 channels=2 remix=no')
 
     @staticmethod
     def unload_sink():
