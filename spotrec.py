@@ -2,13 +2,15 @@
 import urllib.request
 
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC, TRCK, TORY, TYER, TPUB, COMM
+from mutagen.id3 import ID3, APIC, TORY, TYER, TPUB
 
 import dbus
 from dbus.exceptions import DBusException
 import dbus.mainloop.glib
 from gi.repository import GLib
-from helper.SpotifyHelper import generate_metadata as spotMeta
+from helper.SpotifyHelper import generate_metadata as spot_meta
+from helper.SpotifyHelper import TAG_PRESET
+from helper.SpotifyHelper import refresh_token
 
 from threading import Thread
 import subprocess
@@ -21,14 +23,6 @@ import argparse
 import traceback
 import logging
 import shlex
-
-# Deps:
-# 'python'
-# 'python-dbus'
-# 'ffmpeg'
-# 'gawk': awk in command to get sink input id of spotify
-# 'pulseaudio': sink control stuff
-# 'bash': shell commands
 
 app_name = "SpotRec"
 app_version = "0.11.2"
@@ -47,8 +41,8 @@ _underscored_filenames = False
 _pa_recording_sink_name = "spotrec"
 _pa_max_volume = "65536"
 _recording_time_before_song = 0.25
-_recording_time_after_song = 1.25
-_playback_time_before_seeking_to_beginning = 4.5
+_recording_time_after_song = 1.55
+_playback_time_before_seeking_to_beginning = 17
 _shell_executable = "/bin/bash"  # Default: "/bin/sh"
 _shell_encoding = "utf-8"
 _ffmpeg_executable = "ffmpeg"  # Example: "/usr/bin/ffmpeg"
@@ -309,7 +303,8 @@ class Spotify:
                 # Start FFmpeg recording
                 ff = FFmpeg()
                 ff.record(self.track,
-                          self.metadata_track_uri)
+                          self.metadata_track_uri,
+                          self.get_metadata_for_ffmpeg(self.metadata))
 
                 # Give FFmpeg some time to start up before starting the song
                 time.sleep(_recording_time_before_song)
@@ -381,6 +376,7 @@ class Spotify:
         self.metadata = self.iface.Get(self.mpris_player_string, "Metadata")
 
         self.metadata_artist = ", ".join(self.metadata.get(dbus.String(u'xesam:artist')))
+        self.metadata_album = self.metadata.get(dbus.String(u'xesam:album'))
         self.metadata_title = self.metadata.get(dbus.String(u'xesam:title'))
         self.metadata_track_uri = self.metadata.get(dbus.String(u'mpris:trackid'))
 
@@ -402,7 +398,7 @@ class FFmpeg:
     instances = []
     song_uri = ""
 
-    def record(self, filename, song_uri):
+    def record(self, filename, song_uri, metadata_for_file={}):
         if _no_pa_sink:
             self.pulse_input = "default"
         else:
@@ -415,11 +411,16 @@ class FFmpeg:
         else:
             self.filename = filename + ".mp3"
 
+        metadata_params = ''
+        for key, value in metadata_for_file.items():
+            metadata_params += ' -metadata ' + key + '=' + shlex.quote(value)
+
         #  "-hide_banner": to short the debug log a little
         #  "-y": to overwrite existing files
         self.process = Shell.Popen(_ffmpeg_executable
-                                   + ' -hide_banner -y -f pulse -ac 2 -ar 48000 -i '
+                                   + ' -hide_banner -y -f pulse -ac 2 -ar 44100 -i '
                                    + self.pulse_input
+                                   + metadata_params
                                    + ' -acodec libmp3lame -ab 320k '
                                    + shlex.quote(_output_directory + "/" + self.filename))
 
@@ -453,7 +454,7 @@ class FFmpeg:
             else:
                 if _tmp_file:
                     tmp_file = os.path.join(_output_directory, self.filename)
-                    MetaData(spotMeta(self.song_uri), tmp_file)
+                    MetaData(spot_meta(self.song_uri), tmp_file)
 
                     new_file = os.path.join(_output_directory,
                                             self.filename[len(self.tmp_file_prefix):])
@@ -490,6 +491,9 @@ class MetaData:
     def __init__(self, spotify_dict, music_file):
         self.spotify_dict = spotify_dict
         self.music_file = music_file
+        refresh_token()
+        time.sleep(0.5)
+        log.info("[Spotify] Refresh Token")
 
         self.embed_metadata()
 
@@ -498,6 +502,7 @@ class MetaData:
         meta_tags = self.spotify_dict
 
         audiofile = EasyID3(music_file)
+        self._embed_basic_metadata(audiofile, preset=TAG_PRESET)
         audiofile["author"] = meta_tags["artists"][0]["name"]
         audiofile["website"] = meta_tags["external_urls"]["spotify"]
         if meta_tags["publisher"]:
@@ -525,7 +530,36 @@ class MetaData:
             pass
 
         audiofile.save(v2_version=3)
-        log.info(f"[{app_name}] Tags saved")
+        log.info("[Spotify] Tags saved")
+        log.info("")
+
+    def _embed_basic_metadata(self, audiofile, preset=TAG_PRESET):
+        meta_tags = self.spotify_dict
+        audiofile[preset["artist"]] = meta_tags["artists"][0]["name"]
+        audiofile[preset["albumartist"]] = meta_tags["artists"][0]["name"]
+        audiofile[preset["album"]] = meta_tags["album"]["name"]
+        audiofile[preset["title"]] = meta_tags["name"]
+        audiofile[preset["date"]] = meta_tags["release_date"]
+        audiofile[preset["originaldate"]] = meta_tags["release_date"]
+        if meta_tags["genre"]:
+            audiofile[preset["genre"]] = meta_tags["genre"]
+        if meta_tags["copyright"]:
+            audiofile[preset["copyright"]] = meta_tags["copyright"]
+        if self.music_file.endswith(".flac"):
+            audiofile[preset["discnumber"]] = str(meta_tags["disc_number"])
+        else:
+            audiofile[preset["discnumber"]] = [(meta_tags["disc_number"], 0)]
+        if self.music_file.endswith(".flac"):
+            audiofile[preset["tracknumber"]] = str(meta_tags["track_number"])
+        else:
+            if preset["tracknumber"] == TAG_PRESET["tracknumber"]:
+                audiofile[preset["tracknumber"]] = "{}/{}".format(
+                    meta_tags["track_number"], meta_tags["total_tracks"]
+                )
+            else:
+                audiofile[preset["tracknumber"]] = [
+                    (meta_tags["track_number"], meta_tags["total_tracks"])
+                ]
 
 
 class Shell:
@@ -593,13 +627,13 @@ class PulseAudio:
                                                     + _pa_recording_sink_name
                                                     + '" sink_properties=device.description="'
                                                     + _pa_recording_sink_name
-                                                    + '" rate=48000 channels=2')
+                                                    + '" rate=44100 channels=2')
         else:
             PulseAudio.sink_id = Shell.check_output('pactl load-module module-remap-sink sink_name="'
                                                     + _pa_recording_sink_name
                                                     + '" sink_properties=device.description="'
                                                     + _pa_recording_sink_name
-                                                    + '" rate=48000 channels=2 remix=no')
+                                                    + '" rate=44100 channels=2 remix=no')
 
     @staticmethod
     def unload_sink():
