@@ -1,13 +1,12 @@
 import spotipy
 from spotipy import oauth2
-import logging as log
 from titlecase import titlecase
 
 
 def generate_token():
     credentials = oauth2.SpotifyClientCredentials(
-        client_id="4fe3fecfe5334023a1472516cc99d805",
-        client_secret="0f02b7c483c04257984695007a4a8d5c",
+        client_id="bf02b103fc4f499d8b3a65a3ec8739cb",
+        client_secret="689e7d33f9e24da39fe4e1a38b5ab5fe",
     )
     token = credentials.get_access_token()
     return token
@@ -29,7 +28,7 @@ def generate_metadata(raw_song):
     Fetch a song's metadata from Spotify.
     fetch track information directly if it is spotify link
     """
-    log.debug("Fetching metadata for given track URL")
+    print("[Spotipy]", _token)
     meta_tags = spotify.track(raw_song)
 
     artist = spotify.artist(meta_tags["artists"][0]["id"])
@@ -53,3 +52,32 @@ def generate_metadata(raw_song):
     meta_tags[u"total_tracks"] = album["tracks"]["total"]
     meta_tags["year"], *_ = meta_tags["release_date"].split("-")
     return meta_tags
+
+# Apple has specific tags - see mutagen docs -
+# http://mutagen.readthedocs.io/en/latest/api/mp4.html
+M4A_TAG_PRESET = {
+    "album": "\xa9alb",
+    "artist": "\xa9ART",
+    "date": "\xa9day",
+    "title": "\xa9nam",
+    "year": "\xa9day",
+    "originaldate": "purd",
+    "comment": "\xa9cmt",
+    "group": "\xa9grp",
+    "writer": "\xa9wrt",
+    "genre": "\xa9gen",
+    "tracknumber": "trkn",
+    "albumartist": "aART",
+    "discnumber": "disk",
+    "cpil": "cpil",
+    "albumart": "covr",
+    "copyright": "cprt",
+    "tempo": "tmpo",
+    "lyrics": "\xa9lyr",
+    "comment": "\xa9cmt",
+}
+
+TAG_PRESET = {}
+for key in M4A_TAG_PRESET.keys():
+    TAG_PRESET[key] = key
+
