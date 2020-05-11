@@ -25,7 +25,7 @@ import logging
 import shlex
 
 app_name = "SpotRec"
-app_version = "0.11.2"
+app_version = "0.12.0"
 
 # Settings with Defaults
 _debug_logging = False
@@ -289,6 +289,11 @@ class Spotify:
                     if not is_script_paused:
                         doExit()
 
+                    return
+
+                # Do not record ads
+                if self.trackid.startswith("spotify:ad:"):
+                    log.debug(f"[{app_name}] Skipping ad")
                     return
 
                 log.info(f"[{app_name}] Starting recording")
